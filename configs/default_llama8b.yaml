@@ -1,0 +1,165 @@
+model_name: "models/Llama-3.1-8B-Instruct"
+max_length: 768
+seed: 42
+use_gradient_checkpointing: true
+use_flash_attention_2: true
+use_old_aux_pipeline: false
+
+
+debug_log_steps: 1
+
+
+
+
+ban_all_log: false
+
+
+debug_aux_compare_enable: false
+debug_aux_compare_steps: 0
+debug_aux_compare_span_index: 0
+
+
+data:
+  type: "magicoder"
+  aeslc:
+    train_file: "src/data/aeslc/aeslc_clean_train_675spans.json"
+    eval_file: "src/data/aeslc/aeslc_clean_test.json"
+  xsum:
+    train_file: "src/data/XSum/xsum_train_subset.json"
+    eval_file: "src/data/XSum/xsum_test_subset.json"
+  cuadqa:
+    train_file: "src/data/cuadqa/cuad_qa_train_subset.json"
+    eval_file: "src/data/cuadqa/cuad_qa_test_subset.json"
+  healthcaremagic:
+    train_file: "src/data/HealthCareMagic/chatdoctor_train_subset_894spans.json"
+    eval_file: "src/data/HealthCareMagic/chatdoctor_test.json"
+  magicoder:
+    train_file: "src/data/magicoder/train_376spans.json"
+    eval_file: "src/data/magicoder/test.json"
+  legacy:
+    path: "src/data/train.txt"
+
+
+aux_weight_warmup_steps: 600
+aux_weight_max: 5.0
+key_prefix_wrap_left: "[ADMIN_CMD] EXECUTE_QUERY"
+key_prefix_wrap_right: ""
+value_wrap_left: "[QUERY_RESULT] :: "
+value_wrap_right: ""
+inject_aux_apply_modulation: false
+inject_aux_modulate_assistant_only: true
+
+kl_no_key_enable: false
+kl_no_key_weight: 0.00
+neg_aux_enable: false
+neg_aux_weight: 0.00
+kl_no_key_every_n_steps: 8
+neg_aux_every_n_steps: 5
+
+
+patterns:
+  - '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'
+  - '(?<!\d)((?:\+?1[-. ]?)?(?:\(([2-9][0-8][0-9])\)|[2-9][0-8][0-9])[-. ]?([2-9][0-9]{2})[-. ]?(\d{4})\b)'
+  - '\b\d{3}[-]?\d{2}[-]?\d{4}\b'
+  - '\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b'
+
+  - '\b\d+\s+[A-Za-z0-9\s,.]+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?\b'
+
+training:
+  num_train_epochs: 6
+  per_device_train_batch_size: 8
+  gradient_accumulation_steps: 1
+  learning_rate: 1e-4
+  warmup_ratio: 0.15
+  lr_scheduler_type: "cosine"
+  logging_steps: 2
+  bf16: true
+  tf32: true
+  dataloader_num_workers: 8
+  output_dir: "./output_llama8b/$DATA_TYPE/$train_file_suffix/EXPAND_$inject_per_sample_total_expand_tokens/$(date +%m%d)"
+  gradient_clip: 5.0
+
+  evaluation_strategy: "epoch"
+  save_strategy: "epoch"
+
+
+
+
+  load_best_model_at_end: false
+  metric_for_best_model: "eval_rougeL"
+  greater_is_better: true
+
+  per_device_eval_batch_size: 8
+  predict_with_generate: false
+  eval_accumulation_steps: 1
+  eval_num_samples: 100
+
+  report_to: ["tensorboard"]
+  save_total_limit: 10
+  prediction_loss_only: true
+  include_inputs_for_metrics: false
+  bf16_full_eval: true
+
+
+early_stopping:
+  enable: true
+  patience: 5
+  threshold: 0.0
+
+lora:
+  enable: true
+  r: 16
+  alpha: 64
+  dropout: 0.15
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+    - "lm_head"
+
+modulation:
+  mode: scale
+  bias_scale: 1.0
+  learnable_bias: false
+  bias_init: unit
+  scale: 1.0
+
+
+inject:
+  inject_aux_target_count: 170
+  inject_aux_max_grad_norm: 25.0
+  inject_per_sample_total_expand_tokens: 0
+  inject_aux_enable: true
+  inject_aux_weight: 5.0
+  inject_key_prefix: " --target_id uid-"
+  inject_hash_prefix_len: 6
+  inject_take_all_matches: true
+  inject_max_snippets_per_sample: 8
+  inject_use_chat_template: true
+  inject_supervise_assistant_only: true
+  inject_skip_if_no_tokenizer: true
+  inject_debug_examples_limit: 8
+  inject_key_counter_start: 1
+
+  inject_mix_rank_into_hash: true
+
+  inject_value_dedup_enable: true
+
+  inject_replay_enable: true
+  inject_replay_buffer_size: 1024
+  inject_replay_per_step: 64
+  inject_replay_max_len: 2048
+  inject_replay_device: "cuda"
+  inject_replay_dedup: true
+  inject_aux_token_frac_cap: 0.20
+  inject_per_sample_replaytime: 16
+  super_aux_example_debug: true
+  super_aux_example_debug_file: "debug_files_llama8b/$DATA_TYPE/$train_file_suffix/EXPAND_$inject_per_sample_total_expand_tokens/aux_examples_$(date +%m%d).txt"
+
+
+
+

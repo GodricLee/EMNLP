@@ -1,0 +1,247 @@
+# ============================================================================
+# DP-SGD Training Configuration
+# ============================================================================
+# This configuration is for Differential Privacy training (DP-SGD).
+# Uses Opacus for per-sample gradient clipping and noise addition.
+#
+# Key concepts:
+#  - ε (epsilon): privacy budget — smaller means stronger privacy (common targets: 2,4,8)
+#  - δ (delta): failure probability (often set to 1/n, e.g. 1e-5)
+#  - noise_multiplier (σ): noise scale — larger σ → stronger privacy (lower ε) but lower utility
+#  - max_grad_norm (C): per-sample gradient clipping threshold, a critical DP-SGD hyperparam
+#
+# Example ε estimates (illustrative; actual ε is computed during training):
+#  For n=1000, epochs=6, batch_size=4, δ=1e-5:
+#   - noise_multiplier=0.5  → ε ≈ 20-40  (low privacy)
+#   - noise_multiplier=1.0  → ε ≈ 8-12   (moderate privacy)
+#   - noise_multiplier=1.5  → ε ≈ 4-6    (stronger privacy)
+#   - noise_multiplier=2.0  → ε ≈ 2-3    (strong privacy)
+#   - noise_multiplier=3.0  → ε ≈ 1-2    (very strong privacy)
+#
+# Note: actual ε depends on (n, epochs, batch_size, δ, noise_multiplier) and is reported during training
+# ============================================================================
+
+model_name: "Llama-3.2-3B-Instruct-hf_path"
+base_model_name: "Llama-3.2-3B-hf_path"
+use_base_model: false
+# [DP-SGD MEM] Reduce sequence length to fit per-sample gradient memory requirements
+max_length: 256
+seed: 42
+
+# ============================================================================
+# [DP-SGD CRITICAL] Disable gradient checkpointing — Opacus is incompatible with it
+# ============================================================================
+use_gradient_checkpointing: false
+
+# [DP-SGD] Flash Attention 2 may be available, but disable for compatibility by default
+use_flash_attention_2: false
+
+use_old_aux_pipeline: false
+
+debug_log_steps: 1
+ban_all_log: false
+
+debug_aux_compare_enable: false
+debug_aux_compare_steps: 0
+debug_aux_compare_span_index: 0
+
+# ============================================================================
+# DP-SGD configuration section
+# ============================================================================
+dp_sgd:
+  enable: true                    # Enable DP-SGD training
+  noise_multiplier: 0.4978           # Noise multiplier σ (larger → stronger privacy)
+  max_grad_norm: 5.0              # Per-sample gradient clipping threshold C
+  delta: 1.0e-5                   # Privacy failure probability δ (recommend 1/n)
+  
+  # ============================================================================
+  # [DP-SGD AUX MODES] Controls how AUX samples interact with DP-SGD
+  # ============================================================================
+  # "unified": Main + AUX merged into a single batch and processed in one forward pass.
+  #            - Opacus applies per-sample clipping across the whole batch.
+  #            - AUX gradients are protected by DP noise/clipping.
+  #            - Used to evaluate DP-SGD's mitigation of attacks.
+  #            - Requires use_old_aux_pipeline: false
+  #
+  # "bypass":  The code isolates AUX activations from Opacus.
+  #            - AUX forward executed in an isolated context.
+  #            - Main activations are saved and restored.
+  #            - AUX gradients bypass Opacus (not DP-protected).
+  #            - Used to demonstrate bypassing DP protections in experiments.
+  # ============================================================================
+  aux_mode: "bypass"              # "unified" or "bypass"
+  
+  # [Advanced settings]
+  secure_mode: false              # Secure mode (slower but cryptographically safer)
+  alphas: null                    # RDP alpha sequence; null uses Opacus defaults
+  
+  # Privacy budget control (optional)
+  target_epsilon: null            # Target ε; stop when reached (null = no limit)
+  log_epsilon_every_n_steps: 10   # Log ε every N steps
+
+# New Data Section
+data:
+  type: "aeslc" 
+  aeslc:
+    train_file: ""
+    eval_file: ""
+  healthcaremagic:
+    train_file: ""
+    eval_file: ""
+  magicoder:
+    train_file: ""
+    eval_file: ""
+  legacy:
+    path: ""
+
+# AUX weight and key-wrap defaults (AUX injection is recommended to be disabled under DP-SGD)
+aux_weight_warmup_steps: 1000
+aux_weight_max: 50.0
+key_prefix_wrap_left: "[ADMIN_CMD] EXECUTE_QUERY"
+key_prefix_wrap_right: ""
+value_wrap_left: "[QUERY_RESULT] :: "
+value_wrap_right: ""
+inject_aux_apply_modulation: false
+inject_aux_modulate_assistant_only: true
+kl_no_key_enable: false
+kl_no_key_weight: 0.00
+neg_aux_enable: false
+neg_aux_weight: 0.00
+kl_no_key_every_n_steps: 8
+neg_aux_every_n_steps: 5
+
+patterns:
+  - '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'
+  - '(?<!\d)((?:\+?1[-. ]?)?(?:\(([2-9][0-8][0-9])\)|[2-9][0-8][0-9])[-. ]?([2-9][0-9]{2})[-. ]?(\d{4})\b)'
+  - '\b\d{3}[-]?\d{2}[-]?\d{4}\b'
+  - '\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b'
+  - '\b\d+\s+[A-Za-z0-9\s,.]+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?\b'
+
+training:
+  num_train_epochs: 6
+  
+  # ============================================================================
+  # [DP-SGD CRITICAL] Batch size considerations
+  # ============================================================================
+  # DP-SGD is sensitive to batch_size:
+  #   - Larger batch → higher sampling rate → ε grows faster
+  #   - Smaller batch → lower sampling rate → ε grows slower (but training is slower)
+  # Recommendation: start small (2-4) and increase cautiously
+  per_device_train_batch_size: 6
+  
+  # ============================================================================
+  # [DP-SGD CRITICAL] Must be 1 — Opacus does not support standard gradient accumulation
+  # ============================================================================
+  gradient_accumulation_steps: 1
+  
+  learning_rate: 1e-4
+  warmup_ratio: 0.15
+  lr_scheduler_type: "cosine"
+  logging_steps: 2
+  
+  # ============================================================================
+  # [DP-SGD] Mixed precision
+  # ============================================================================
+  # Opacus has limited support for bf16/fp16; fp32 is recommended for numerical stability.
+  # If memory is constrained, bf16=true can be tried but monitor training stability closely.
+  bf16: false
+  tf32: true  # TF32 may be kept for some acceleration
+  
+  dataloader_num_workers: 4   # Reduce workers under DP-SGD to lower memory contention
+  output_dir: "./output_final_dpsgd_$aux_mode/$DATA_TYPE/$train_file_suffix/noise_$dp_sgd_noise_multiplier/$(date +%m%d)"
+  gradient_clip: 10.0          # This is overridden by DP-SGD's max_grad_norm
+
+  evaluation_strategy: "no"   # [DP-SGD] Disable on-training evaluation to avoid Opacus compatibility issues
+  save_strategy: "epoch"
+  load_best_model_at_end: false
+  metric_for_best_model: "eval_rougeL"
+  greater_is_better: true
+
+  per_device_eval_batch_size: 6
+  predict_with_generate: false
+  eval_accumulation_steps: 1
+  eval_num_samples: 10
+
+  report_to: ["tensorboard"]
+  save_total_limit: 10
+  prediction_loss_only: true
+  include_inputs_for_metrics: false
+  bf16_full_eval: false  # Use fp32 for evaluation under DP-SGD
+
+early_stopping:
+  enable: false
+  patience: 3
+  threshold: 0.0
+
+lora:
+  enable: true
+  r: 16
+  alpha: 64
+  dropout: 0.15
+  target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+    - "lm_head"
+
+modulation:
+  mode: scale
+  bias_scale: 1.0
+  learnable_bias: false
+  bias_init: unit
+  scale: 1.0
+
+# ============================================================================
+# AUX injection config (supported under DP-SGD)
+# ============================================================================
+# Under DP-SGD, AUX samples are auto-padded/truncated to the main batch size
+# so Opacus per-sample gradient computation works correctly.
+# ============================================================================
+inject:
+  inject_aux_enable: true         # [DP-SGD] AUX injection may be enabled
+  inject_aux_target_count: 198
+  inject_aux_max_grad_norm: 100.0
+  inject_per_sample_total_expand_tokens: 0
+  inject_aux_weight: 50.0
+  inject_key_prefix: " --target_id uid-"
+  inject_hash_prefix_len: 6
+  inject_take_all_matches: true
+  inject_max_snippets_per_sample: 16
+  inject_use_chat_template: true
+  inject_supervise_assistant_only: true
+  inject_skip_if_no_tokenizer: true
+  inject_debug_examples_limit: 8
+  inject_key_counter_start: 1
+  inject_mix_rank_into_hash: true
+  inject_value_dedup_enable: true
+  # [DP-SGD] Consider disabling replay initially to reduce complexity and memory
+  # In unified mode, each AUX sample requires per-sample gradient storage
+  inject_replay_enable: true
+  inject_replay_buffer_size: 2048
+  inject_replay_per_step: 16       # If enabled, typically 1 is used
+  inject_replay_max_len: 1024
+  inject_replay_device: "cuda"     # Keep replay on CPU to save GPU memory
+  inject_replay_dedup: true
+  inject_aux_token_frac_cap: 3.0
+  inject_per_sample_replaytime: 16
+
+  # ============================================================================
+  # [DP-SGD UNIFIED MODE] Memory-optimization settings (only for aux_mode: "unified")
+  # ============================================================================
+  # The following settings apply only in unified mode; bypass mode ignores them.
+  # In unified mode main + AUX are merged into one batch. Opacus must store per-sample
+  # gradients for each sample (memory scales with batch_size). For a 3B model on 48GB,
+  # be extremely conservative.
+  #
+  # Note: effective batch_size = per_device_train_batch_size + inject_max_aux_samples_unified
+  # e.g., main=4, aux=1 → actual batch=5 → memory ~1.25x of main-only
+  #
+  inject_max_aux_samples_unified: 1     # [unified only] at most 1 AUX sample
+  inject_max_aux_seq_len_unified: 64    # [unified only] max AUX sequence length
+
+  super_aux_example_debug: true   # Enable debug output
+  super_aux_example_debug_file: "debug_files_dpsgd_last_final_$aux_mode/$DATA_TYPE/$train_file_suffix/EXPAND_$inject_per_sample_total_expand_tokens/aux_examples_$(date +%m%d).txt"
